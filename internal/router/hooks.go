@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -17,6 +19,8 @@ type HookInput struct {
 	ToolName       string                     `json:"tool_name"`
 	ToolInput      map[string]json.RawMessage `json:"tool_input"`
 	ToolResponse   json.RawMessage            `json:"tool_response"`
+	ToModel        string                     `json:"to_model"`
+	RequestedModel string                     `json:"requested_model"`
 }
 
 // InMainSession reports whether the hook fired in the main conversation.
@@ -47,33 +51,62 @@ const Policy = `cc-router is active. Pick subagents by the kind of work; the rou
 - Docs, summaries, mechanical edits → cc-router:scribe (grunt tier).
 Don't pass a model to subagents unless you want a cheaper one; more expensive requests are capped to the tier.`
 
-// Run dispatches one hook event. It returns the JSON to print (nil for none).
-// Errors are returned for logging only; callers must still exit 0.
-func Run(event string, stdin io.Reader, env Env) ([]byte, error) {
+// Result is what a hook hands back to Claude Code.
+type Result struct {
+	Stdout []byte // JSON to print on stdout (exit 0)
+	Block  string // non-empty: print to stderr and exit 2
+}
+
+// Run dispatches one hook event. Errors are returned for logging only; the
+// caller must still exit 0 (fail open) unless Result.Block is set.
+func Run(event string, stdin io.Reader, env Env) (Result, error) {
 	var in HookInput
 	if err := json.NewDecoder(stdin).Decode(&in); err != nil {
-		return nil, fmt.Errorf("decode %s input: %w", event, err)
+		return Result{}, fmt.Errorf("decode %s input: %w", event, err)
 	}
+	var out []byte
+	var err error
 	switch event {
 	case "session-start":
-		return sessionStart(&in)
+		out, err = sessionStart(&in, env)
 	case "pre-agent":
-		return preAgent(&in, env)
+		out, err = preAgent(&in, env)
 	case "post-agent":
-		return nil, postAgent(&in, env)
+		err = postAgent(&in, env)
+	case "user-prompt-submit":
+		out, err = userPromptSubmit(&in, env)
+	case "pre-model-switch":
+		return preModelSwitch(&in, env)
+	default:
+		err = fmt.Errorf("unknown hook %q", event)
 	}
-	return nil, fmt.Errorf("unknown hook %q", event)
+	return Result{Stdout: out}, err
 }
 
 type hookOutput struct {
 	HookSpecificOutput map[string]any `json:"hookSpecificOutput"`
 }
 
-func sessionStart(in *HookInput) ([]byte, error) {
-	return json.Marshal(hookOutput{map[string]any{
+func sessionStart(in *HookInput, env Env) ([]byte, error) {
+	var err error
+	if env.DataDir != "" {
+		// The statusline shim finds the current install through this file;
+		// the plugin root path changes on every update.
+		if root := env.Getenv("CLAUDE_PLUGIN_ROOT"); root != "" {
+			if err = os.MkdirAll(env.DataDir, 0o755); err == nil {
+				err = os.WriteFile(filepath.Join(env.DataDir, "root"), []byte(root), 0o644)
+			}
+		}
+		pruneSessions(env.DataDir, env.Now(), 7*24*time.Hour)
+	}
+	out, mErr := json.Marshal(hookOutput{map[string]any{
 		"hookEventName":     "SessionStart",
 		"additionalContext": Policy,
 	}})
+	if mErr != nil {
+		return nil, mErr
+	}
+	return out, err
 }
 
 func preAgent(in *HookInput, env Env) ([]byte, error) {

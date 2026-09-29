@@ -1,17 +1,20 @@
 // Command cc-router is the single executable behind every cc-router hook,
 // skill and statusline call.
 //
-//	cc-router hook <session-start|pre-agent|post-agent>   (stdin: hook JSON)
-//	cc-router status  [--data DIR]
-//	cc-router doctor  [--data DIR]
-//	cc-router version
+//	cc-router hook <event>              (stdin: hook JSON)
+//	cc-router statusline                (stdin: statusline JSON)
+//	cc-router setup [--root DIR] [--remove]
+//	cc-router status | doctor | version
 //
-// Hooks are fail-open: any error is logged to <data>/errors.log and the
-// process exits 0 with no output, so Claude Code keeps working.
+// Every command accepts --data DIR (default $CLAUDE_PLUGIN_DATA).
+// Hooks and the statusline are fail-open: errors go to <data>/errors.log and
+// the process exits 0, so Claude Code keeps working. The one deliberate
+// exception is a hook block, which exits 2 with the reason on stderr.
 package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -21,63 +24,96 @@ import (
 var version = "dev" // set with -ldflags "-X main.version=..."
 
 func main() {
-	args := os.Args[1:]
-	dataDir := os.Getenv("CLAUDE_PLUGIN_DATA")
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Getenv, time.Now))
+}
+
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv router.Getenv, now func() time.Time) int {
+	dataDir := getenv("CLAUDE_PLUGIN_DATA")
+	root := getenv("CLAUDE_PLUGIN_ROOT")
+	remove := false
 	var rest []string
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--data" && i+1 < len(args) {
+		switch {
+		case args[i] == "--data" && i+1 < len(args):
 			dataDir = args[i+1]
 			i++
-			continue
+		case args[i] == "--root" && i+1 < len(args):
+			root = args[i+1]
+			i++
+		case args[i] == "--remove":
+			remove = true
+		default:
+			rest = append(rest, args[i])
 		}
-		rest = append(rest, args[i])
 	}
-	env := router.Env{Getenv: os.Getenv, DataDir: dataDir, Now: time.Now}
+	env := router.Env{Getenv: getenv, DataDir: dataDir, Now: now}
 
 	if len(rest) == 0 {
-		usage()
-		os.Exit(2)
+		fmt.Fprintln(stderr, "usage: cc-router hook <event> | statusline | setup [--remove] | status | doctor | version  [--data DIR]")
+		return 2
 	}
 	switch rest[0] {
 	case "hook":
 		if len(rest) < 2 {
-			os.Exit(0)
+			return 0
 		}
-		runHook(rest[1], env)
+		return runHook(rest[1], stdin, stdout, stderr, env)
+	case "statusline":
+		return failOpen(env, "statusline", func() error { return router.Statusline(stdin, stdout, env) })
+	case "setup":
+		var err error
+		if remove {
+			err = router.Remove(stdout, env)
+		} else {
+			err = router.Setup(stdout, env, root)
+		}
+		if err != nil {
+			fmt.Fprintln(stderr, "cc-router setup:", err)
+			return 1
+		}
 	case "status":
-		router.Status(os.Stdout, env)
+		router.Status(stdout, env)
 	case "doctor":
-		if !router.Doctor(os.Stdout, env, version) {
-			os.Exit(1)
+		if !router.Doctor(stdout, env, version) {
+			return 1
 		}
 	case "version":
-		fmt.Println(version)
+		fmt.Fprintln(stdout, version)
 	default:
-		usage()
-		os.Exit(2)
+		fmt.Fprintf(stderr, "cc-router: unknown command %q\n", rest[0])
+		return 2
 	}
+	return 0
 }
 
-func runHook(event string, env router.Env) {
+func runHook(event string, stdin io.Reader, stdout, stderr io.Writer, env router.Env) (code int) {
+	var res router.Result
+	code = failOpen(env, "hook "+event, func() error {
+		var err error
+		res, err = router.Run(event, stdin, env)
+		return err
+	})
+	if res.Block != "" {
+		fmt.Fprintln(stderr, res.Block)
+		return 2
+	}
+	stdout.Write(res.Stdout)
+	return code
+}
+
+// failOpen runs f, logs any error or panic, and always reports success.
+func failOpen(env router.Env, what string, f func() error) int {
 	defer func() {
 		if r := recover(); r != nil {
-			logError(env, fmt.Errorf("panic in %s: %v", event, r))
+			logError(env, fmt.Errorf("panic in %s: %v", what, r))
 		}
-		os.Exit(0)
 	}()
-	out, err := router.Run(event, os.Stdin, env)
-	if err != nil {
-		logError(env, err)
+	if err := f(); err != nil {
+		logError(env, fmt.Errorf("%s: %w", what, err))
 	}
-	if len(out) > 0 {
-		os.Stdout.Write(out)
-	}
+	return 0
 }
 
 func logError(env router.Env, err error) {
 	_ = router.AppendLog(env.DataDir, "errors.log", map[string]any{"error": err.Error(), "version": version})
-}
-
-func usage() {
-	fmt.Fprintln(os.Stderr, "usage: cc-router hook <event> | status | doctor | version  [--data DIR]")
 }

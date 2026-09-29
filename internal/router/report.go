@@ -141,6 +141,13 @@ func Doctor(w io.Writer, env Env, version string) bool {
 		info("subagent default", "CLAUDE_CODE_SUBAGENT_MODEL="+m+" (applies to agents without a model: and not in the route table)")
 	}
 
+	if sl, err := readStatusLine(SettingsPath(env.Getenv)); err != nil {
+		check(false, "statusline", err.Error())
+	} else if sl != nil && env.DataDir != "" && strings.Contains(fmt.Sprint(sl["command"]), filepath.Join(env.DataDir, shimName)) {
+		check(true, "statusline", "wired through cc-router")
+	} else {
+		info("statusline", "not wired: quota warnings and step-down are off until you run /cc-router:setup")
+	}
 	info("quota", describeQuota(ReadQuota(env.DataDir), env.Now()))
 
 	if lines := tail(filepath.Join(env.DataDir, "decisions.jsonl"), 1); len(lines) == 1 {

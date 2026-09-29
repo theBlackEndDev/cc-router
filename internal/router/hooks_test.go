@@ -22,10 +22,11 @@ const agentInput = `{"session_id":"s1","hook_event_name":"PreToolUse","agent_id"
 func runPre(t *testing.T, env Env, subType, modelField string) map[string]any {
 	t.Helper()
 	in := strings.NewReader(fmt.Sprintf(agentInput, subType, modelField))
-	out, err := Run("pre-agent", in, env)
+	res, err := Run("pre-agent", in, env)
 	if err != nil {
 		t.Fatal(err)
 	}
+	out := res.Stdout
 	if out == nil {
 		return nil
 	}
@@ -88,9 +89,20 @@ func TestPreAgentUsesQuotaSnapshot(t *testing.T) {
 }
 
 func TestSessionStartInjectsPolicy(t *testing.T) {
-	out, err := Run("session-start", strings.NewReader(`{"session_id":"s1","hook_event_name":"SessionStart","source":"startup"}`), testEnv(t))
+	env := testEnv(t)
+	env.Getenv = func(k string) string {
+		if k == "CLAUDE_PLUGIN_ROOT" {
+			return "/opt/plugins/cc-router/0.1.0"
+		}
+		return ""
+	}
+	res, err := Run("session-start", strings.NewReader(`{"session_id":"s1","hook_event_name":"SessionStart","source":"startup"}`), env)
 	if err != nil {
 		t.Fatal(err)
+	}
+	out := res.Stdout
+	if root, _ := os.ReadFile(filepath.Join(env.DataDir, "root")); string(root) != "/opt/plugins/cc-router/0.1.0" {
+		t.Errorf("root pointer = %q", root)
 	}
 	if !strings.Contains(string(out), "cc-router:scout") || !strings.Contains(string(out), `"SessionStart"`) {
 		t.Errorf("policy missing: %s", out)
