@@ -13,6 +13,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -88,11 +89,21 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv router
 
 func runHook(event string, stdin io.Reader, stdout, stderr io.Writer, env router.Env) (code int) {
 	var res router.Result
+	raw, _ := io.ReadAll(stdin)
 	code = failOpen(env, "hook "+event, func() error {
 		var err error
-		res, err = router.Run(event, stdin, env)
+		res, err = router.Run(event, bytes.NewReader(raw), env)
 		return err
 	})
+	if env.Getenv("CC_ROUTER_DEBUG") != "" {
+		in := string(raw)
+		if len(in) > 4000 {
+			in = in[:4000] + "…"
+		}
+		_ = router.AppendLog(env.DataDir, "debug.log", map[string]any{
+			"hook": event, "input": in, "stdout": string(res.Stdout), "block": res.Block,
+		})
+	}
 	if res.Block != "" {
 		fmt.Fprintln(stderr, res.Block)
 		return 2

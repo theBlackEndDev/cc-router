@@ -12,6 +12,8 @@ import (
 // HookInput is the subset of Claude Code's hook stdin that cc-router reads.
 type HookInput struct {
 	SessionID      string                     `json:"session_id"`
+	TranscriptPath string                     `json:"transcript_path"`
+	Cwd            string                     `json:"cwd"`
 	HookEventName  string                     `json:"hook_event_name"`
 	AgentID        *string                    `json:"agent_id"` // present as null in the main session
 	PermissionMode string                     `json:"permission_mode"`
@@ -20,11 +22,31 @@ type HookInput struct {
 	ToolInput      map[string]json.RawMessage `json:"tool_input"`
 	ToolResponse   json.RawMessage            `json:"tool_response"`
 	ToModel        string                     `json:"to_model"`
+	Model          json.RawMessage            `json:"model"` // SessionStart only, not always present
 	RequestedModel string                     `json:"requested_model"`
 }
 
 // InMainSession reports whether the hook fired in the main conversation.
 func (h *HookInput) InMainSession() bool { return h.AgentID == nil || *h.AgentID == "" }
+
+func (h *HookInput) hasKey(key string) bool {
+	raw, ok := h.ToolInput[key]
+	return ok && string(raw) != "null"
+}
+
+// modelID reads SessionStart's model field, which may be a string or an
+// object with an id.
+func (h *HookInput) modelID() string {
+	var s string
+	if json.Unmarshal(h.Model, &s) == nil {
+		return s
+	}
+	var o struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(h.Model, &o)
+	return o.ID
+}
 
 func (h *HookInput) toolString(key string) string {
 	var s string
@@ -77,6 +99,10 @@ func Run(event string, stdin io.Reader, env Env) (Result, error) {
 		out, err = userPromptSubmit(&in, env)
 	case "pre-model-switch":
 		return preModelSwitch(&in, env)
+	case "post-model-switch":
+		err = recordModel(env, in.SessionID, in.ToModel)
+	case "pre-tool":
+		out, err = preTool(&in, env)
 	default:
 		err = fmt.Errorf("unknown hook %q", event)
 	}
@@ -98,6 +124,9 @@ func sessionStart(in *HookInput, env Env) ([]byte, error) {
 			}
 		}
 		pruneSessions(env.DataDir, env.Now(), 7*24*time.Hour)
+		if mErr := recordModel(env, in.SessionID, in.modelID()); err == nil {
+			err = mErr
+		}
 	}
 	out, mErr := json.Marshal(hookOutput{map[string]any{
 		"hookEventName":     "SessionStart",
@@ -113,6 +142,7 @@ func preAgent(in *HookInput, env Env) ([]byte, error) {
 	if in.ToolName != "Agent" && in.ToolName != "Task" {
 		return nil, nil
 	}
+	resetReadRun(env, in.SessionID)
 	cfg := Load(env.Getenv, env.DataDir)
 	subType := in.toolString("subagent_type")
 	requested := in.toolString("model")
