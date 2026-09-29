@@ -1,0 +1,12 @@
+#!/bin/sh
+# Picks the prebuilt binary for this OS/arch. Kept to one subprocess (uname):
+# hooks run this on every matched tool call.
+# If no binary matches, exit 0 silently: cc-router must never block Claude Code.
+set -- $(uname -sm) "$@"
+os=$1 arch=$2
+shift 2
+case $os in Darwin) os=darwin ;; Linux) os=linux ;; esac
+case $arch in x86_64|amd64) arch=amd64 ;; arm64|aarch64) arch=arm64 ;; esac
+bin="${0%/*}/../libexec/cc-router-$os-$arch"
+[ -x "$bin" ] || exit 0
+exec "$bin" "$@"

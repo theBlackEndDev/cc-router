@@ -1,0 +1,14 @@
+{
+  "description": "cc-router: tiered model routing",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/cc-router\" hook session-start", "timeout": 10 } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/cc-router\" hook pre-agent", "timeout": 10 } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Agent", "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/cc-router\" hook post-agent", "timeout": 10 } ] }
+    ]
+  }
+}

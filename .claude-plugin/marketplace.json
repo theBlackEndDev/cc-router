@@ -1,0 +1,15 @@
+{
+  "name": "cc-router",
+  "description": "Tiered model routing for Claude Code",
+  "owner": {
+    "name": "theblackenddev",
+    "url": "https://github.com/theblackenddev"
+  },
+  "plugins": [
+    {
+      "name": "cc-router",
+      "source": "./plugins/cc-router",
+      "description": "Route subagents to plan/build/grunt model tiers, step down under quota pressure, and keep recon out of the expensive main context."
+    }
+  ]
+}

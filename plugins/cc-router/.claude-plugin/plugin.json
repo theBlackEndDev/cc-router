@@ -1,0 +1,55 @@
+{
+  "name": "cc-router",
+  "version": "0.1.0",
+  "description": "Tiered model routing for Claude Code: plan / build / grunt tiers, quota-aware step-down, scout-first recon.",
+  "author": {
+    "name": "theblackenddev",
+    "url": "https://github.com/theblackenddev"
+  },
+  "homepage": "https://github.com/theblackenddev/cc-router",
+  "repository": "https://github.com/theblackenddev/cc-router",
+  "license": "MIT",
+  "keywords": ["routing", "models", "subagents", "quota", "cost"],
+  "userConfig": {
+    "plan_model": {
+      "type": "string",
+      "title": "Plan tier model",
+      "description": "Model alias or full ID for architecture, plans and deep review (default: opus).",
+      "default": "opus"
+    },
+    "build_model": {
+      "type": "string",
+      "title": "Build tier model",
+      "description": "Model alias or full ID for implementation, review and research (default: sonnet).",
+      "default": "sonnet"
+    },
+    "grunt_model": {
+      "type": "string",
+      "title": "Grunt tier model",
+      "description": "Model alias or full ID for search, recon and mechanical edits (default: haiku).",
+      "default": "haiku"
+    },
+    "warn_at": {
+      "type": "number",
+      "title": "Warn at (% of quota window)",
+      "description": "Tell you when the 5-hour or 7-day window passes this percentage (default: 70).",
+      "default": 70,
+      "min": 1,
+      "max": 100
+    },
+    "degrade_at": {
+      "type": "number",
+      "title": "Step down at (% of quota window)",
+      "description": "Route every tier one step cheaper above this percentage (default: 85).",
+      "default": 85,
+      "min": 1,
+      "max": 100
+    },
+    "guard_enabled": {
+      "type": "boolean",
+      "title": "Scout guard",
+      "description": "When the main session is on the plan model, block unbounded searches once and suggest the scout (default: on).",
+      "default": true
+    }
+  }
+}
