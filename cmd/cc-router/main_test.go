@@ -78,3 +78,17 @@ func TestUsageAndUnknown(t *testing.T) {
 		t.Errorf("version: %d %q", code, out)
 	}
 }
+
+func TestStatusUsesOptionsSavedAtSessionStart(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_PLUGIN_OPTION_PLAN_MODEL", "fable")
+	if code, _, _ := call(t, `{"session_id":"s","source":"startup"}`, dir, "hook", "session-start"); code != 0 {
+		t.Fatalf("session-start exit %d", code)
+	}
+	os.Unsetenv("CLAUDE_PLUGIN_OPTION_PLAN_MODEL") // the Bash tool doesn't get plugin options
+	// call() passes a getenv without plugin options, like the Bash tool.
+	_, out, _ := call(t, "", dir, "status")
+	if !strings.Contains(out, "plan=fable") {
+		t.Errorf("status should show the saved option:\n%s", out)
+	}
+}

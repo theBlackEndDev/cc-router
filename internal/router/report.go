@@ -45,11 +45,58 @@ func Status(w io.Writer, env Env) {
 		fmt.Fprintln(w, "  none yet")
 	}
 	for _, l := range lines {
-		fmt.Fprintln(w, "  "+l)
+		fmt.Fprintln(w, "  "+formatDecision(l))
 	}
 	for _, warn := range cfg.Warnings {
 		fmt.Fprintln(w, "WARNING: "+warn)
 	}
+}
+
+// formatDecision turns one decisions.jsonl line into a readable sentence.
+func formatDecision(line string) string {
+	var r struct {
+		TS           string `json:"ts"`
+		Event        string `json:"event"`
+		SubagentType string `json:"subagent_type"`
+		Model        string `json:"model"`
+		Reason       string `json:"reason"`
+		Routed       bool   `json:"routed"`
+		Resolved     string `json:"resolved_model"`
+		Tokens       int    `json:"tokens"`
+		DurationMs   int    `json:"duration_ms"`
+		Tool         string `json:"tool"`
+		To           string `json:"to"`
+		Allowed      bool   `json:"allowed"`
+	}
+	if json.Unmarshal([]byte(line), &r) != nil {
+		return line
+	}
+	when := r.TS
+	if t, err := time.Parse(time.RFC3339, r.TS); err == nil {
+		when = t.Local().Format("Jan 2 15:04")
+	}
+	var what string
+	switch r.Event {
+	case "route":
+		if !r.Routed {
+			what = fmt.Sprintf("left alone  %s (not in the route table)", r.SubagentType)
+		} else {
+			what = fmt.Sprintf("routed      %s → %s (%s)", r.SubagentType, r.Model, r.Reason)
+		}
+	case "ran":
+		what = fmt.Sprintf("finished    %s on %s, %d tokens, %.1fs", r.SubagentType, r.Resolved, r.Tokens, float64(r.DurationMs)/1000)
+	case "guard":
+		what = fmt.Sprintf("guard       stepped in on a %s call", r.Tool)
+	case "model-switch":
+		verdict := "paused"
+		if r.Allowed {
+			verdict = "allowed"
+		}
+		what = fmt.Sprintf("/model      %s switch to %s (%s)", verdict, r.To, r.Reason)
+	default:
+		return line
+	}
+	return when + "  " + what
 }
 
 func describeQuota(q *Quota, now time.Time) string {

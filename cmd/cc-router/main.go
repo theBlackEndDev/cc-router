@@ -14,9 +14,12 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/theblackenddev/cc-router/internal/router"
@@ -48,6 +51,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv router
 		}
 	}
 	env := router.Env{Getenv: getenv, DataDir: dataDir, Now: now}
+	if len(rest) > 0 && (rest[0] == "status" || rest[0] == "doctor") {
+		// Skills run these through the Bash tool, which doesn't receive plugin
+		// options; use the values SessionStart saved.
+		env.Getenv = withSavedOptions(getenv, dataDir)
+	}
 
 	if len(rest) == 0 {
 		fmt.Fprintln(stderr, "usage: cc-router hook <event> | statusline | setup [--remove] | status | doctor | version  [--data DIR]")
@@ -90,6 +98,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv router
 func runHook(event string, stdin io.Reader, stdout, stderr io.Writer, env router.Env) (code int) {
 	var res router.Result
 	raw, _ := io.ReadAll(stdin)
+	if event == "session-start" && env.DataDir != "" {
+		// Hooks are the only processes that receive the user's plugin options;
+		// save them for status and doctor.
+		_ = router.WriteJSON(env.DataDir, optionsFile, pluginOptions())
+	}
 	code = failOpen(env, "hook "+event, func() error {
 		var err error
 		res, err = router.Run(event, bytes.NewReader(raw), env)
@@ -101,7 +114,7 @@ func runHook(event string, stdin io.Reader, stdout, stderr io.Writer, env router
 			in = in[:4000] + "…"
 		}
 		_ = router.AppendLog(env.DataDir, "debug.log", map[string]any{
-			"hook": event, "input": in, "stdout": string(res.Stdout), "block": res.Block,
+			"hook": event, "input": in, "stdout": string(res.Stdout), "block": res.Block, "options": pluginOptions(),
 		})
 	}
 	if res.Block != "" {
@@ -123,6 +136,34 @@ func failOpen(env router.Env, what string, f func() error) int {
 		logError(env, fmt.Errorf("%s: %w", what, err))
 	}
 	return 0
+}
+
+const optionsFile = "options.json"
+
+// pluginOptions returns the CLAUDE_PLUGIN_OPTION_* variables Claude Code set.
+func pluginOptions() map[string]string {
+	opts := map[string]string{}
+	for _, kv := range os.Environ() {
+		if k, v, ok := strings.Cut(kv, "="); ok && strings.HasPrefix(k, "CLAUDE_PLUGIN_OPTION_") {
+			opts[k] = v
+		}
+	}
+	return opts
+}
+
+// withSavedOptions falls back to <data>/options.json for plugin options that
+// are not in the environment.
+func withSavedOptions(getenv router.Getenv, dataDir string) router.Getenv {
+	saved := map[string]string{}
+	if raw, err := os.ReadFile(filepath.Join(dataDir, optionsFile)); err == nil {
+		_ = json.Unmarshal(raw, &saved)
+	}
+	return func(k string) string {
+		if v := getenv(k); v != "" || !strings.HasPrefix(k, "CLAUDE_PLUGIN_OPTION_") {
+			return v
+		}
+		return saved[k]
+	}
 }
 
 func logError(env router.Env, err error) {

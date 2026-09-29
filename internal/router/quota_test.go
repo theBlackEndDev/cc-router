@@ -212,3 +212,27 @@ func TestPreModelSwitchBlockOnceThenAllow(t *testing.T) {
 		t.Error("repeat after the window expired should block again")
 	}
 }
+
+func TestPruneRemovesOldPerSessionFiles(t *testing.T) {
+	env := testEnv(t)
+	old := now.Add(-8 * 24 * time.Hour)
+	for _, p := range []string{"sessions/a.json", "notices/a.json", "guard/a.json", "switch-a.json"} {
+		full := filepath.Join(env.DataDir, p)
+		os.MkdirAll(filepath.Dir(full), 0o755)
+		os.WriteFile(full, []byte("{}"), 0o644)
+		os.Chtimes(full, old, old)
+	}
+	os.WriteFile(filepath.Join(env.DataDir, "switch-fresh.json"), []byte("{}"), 0o644)
+	fresh := now.Add(-time.Hour)
+	os.Chtimes(filepath.Join(env.DataDir, "switch-fresh.json"), fresh, fresh)
+
+	pruneSessions(env.DataDir, now, 7*24*time.Hour)
+	for _, p := range []string{"sessions/a.json", "notices/a.json", "guard/a.json", "switch-a.json"} {
+		if _, err := os.Stat(filepath.Join(env.DataDir, p)); err == nil {
+			t.Errorf("%s older than 7 days was not pruned", p)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(env.DataDir, "switch-fresh.json")); err != nil {
+		t.Error("fresh switch file was pruned")
+	}
+}

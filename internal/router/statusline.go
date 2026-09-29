@@ -167,6 +167,13 @@ func ReadSession(dataDir, sessionID string) *SessionState {
 
 // pruneSessions deletes per-session files older than maxAge.
 func pruneSessions(dataDir string, now time.Time, maxAge time.Duration) {
+	if old, err := filepath.Glob(filepath.Join(dataDir, "switch-*.json")); err == nil {
+		for _, p := range old {
+			if info, err := os.Stat(p); err == nil && now.Sub(info.ModTime()) > maxAge {
+				os.Remove(p)
+			}
+		}
+	}
 	for _, sub := range []string{"sessions", "notices", "guard"} {
 		dir := filepath.Join(dataDir, sub)
 		entries, err := os.ReadDir(dir)

@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu-latest = linux/amd64, macos-latest = darwin/arm64 (Apple Silicon)
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Users install the committed binaries, so check those before building.
+      - name: Committed binary runs on this platform
+        run: |
+          for t in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
+            test -x "plugins/cc-router/libexec/cc-router-$t" || { echo "missing libexec/cc-router-$t (run make dist)"; exit 1; }
+          done
+          plugins/cc-router/bin/cc-router version
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+      - name: vet and test
+        run: make test
+
+      - name: build
+        run: make build
+
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Claude Code
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Validate marketplace and plugin
+        run: make validate

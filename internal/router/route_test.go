@@ -3,6 +3,7 @@ package router
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -146,6 +147,21 @@ func TestVersionAtLeast(t *testing.T) {
 	}{{"2.1.284", "2.1.281", true}, {"2.1.281", "2.1.281", true}, {"2.1.99", "2.1.281", false}, {"3.0.0", "2.1.281", true}, {"", "2.1.281", false}} {
 		if got := versionAtLeast(c.have, c.want); got != c.ok {
 			t.Errorf("versionAtLeast(%q, %q) = %v", c.have, c.want, got)
+		}
+	}
+}
+
+func TestFormatDecision(t *testing.T) {
+	for in, want := range map[string]string{
+		`{"event":"route","routed":true,"subagent_type":"cc-router:scout","model":"haiku","reason":"tier grunt","ts":"x"}`: "routed      cc-router:scout → haiku (tier grunt)",
+		`{"event":"route","routed":false,"subagent_type":"my-agent","ts":"x"}`:                                             "left alone  my-agent (not in the route table)",
+		`{"event":"ran","subagent_type":"Explore","resolved_model":"claude-haiku-4-5","tokens":10340,"duration_ms":4277}`:  "finished    Explore on claude-haiku-4-5, 10340 tokens, 4.3s",
+		`{"event":"guard","tool":"Bash"}`: "guard       stepped in on a Bash call",
+		`{"event":"model-switch","to":"claude-opus-5-5","allowed":false,"reason":"7d quota 90%"}`: "/model      paused switch to claude-opus-5-5 (7d quota 90%)",
+		`not json`: "not json",
+	} {
+		if got := formatDecision(in); !strings.HasSuffix(got, want) {
+			t.Errorf("formatDecision(%s)\n got %q\nwant suffix %q", in, got, want)
 		}
 	}
 }
